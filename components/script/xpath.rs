@@ -10,7 +10,6 @@ use std::fmt::Debug;
 use std::rc::Rc;
 
 use html5ever::{LocalName, Namespace, Prefix};
-use js::context::JSContext;
 use script_bindings::callback::ExceptionHandling;
 use script_bindings::codegen::GenericBindings::AttrBinding::AttrMethods;
 use script_bindings::codegen::GenericBindings::NodeBinding::{GetRootNodeOptions, NodeMethods};
@@ -42,13 +41,11 @@ pub(crate) struct XPathWrapper<T>(pub T);
 pub(crate) struct XPathImplementation;
 
 impl xpath::Dom for XPathImplementation {
-    type Context = JSContext;
     type Node = XPathWrapper<DomRoot<Node>>;
     type NamespaceResolver = XPathWrapper<Rc<XPathNSResolver>>;
 }
 
 impl xpath::Node for XPathWrapper<DomRoot<Node>> {
-    type Context = JSContext;
     type ProcessingInstruction = XPathWrapper<DomRoot<ProcessingInstruction>>;
     type Document = XPathWrapper<DomRoot<Document>>;
     type Attribute = XPathWrapper<DomRoot<Attr>>;
@@ -204,7 +201,6 @@ impl xpath::Document for XPathWrapper<DomRoot<Document>> {
 }
 
 impl xpath::Element for XPathWrapper<DomRoot<Element>> {
-    type Context = JSContext;
     type Node = XPathWrapper<DomRoot<Node>>;
     type Attribute = XPathWrapper<DomRoot<Attr>>;
 
@@ -212,7 +208,11 @@ impl xpath::Element for XPathWrapper<DomRoot<Element>> {
         DomRoot::from_ref(self.0.upcast::<Node>()).into()
     }
 
-    fn attributes(&self, cx: &mut JSContext) -> impl Iterator<Item = Self::Attribute> {
+    #[expect(unsafe_code)]
+    fn attributes(&self) -> impl Iterator<Item = Self::Attribute> {
+        let mut cx = unsafe { script_bindings::script_runtime::temp_cx() };
+        let cx = &mut cx;
+
         struct AttributeIterator<'a> {
             attributes: &'a AttributeStorage,
             position: usize,
@@ -279,9 +279,11 @@ impl xpath::Attribute for XPathWrapper<DomRoot<Attr>> {
 }
 
 impl xpath::NamespaceResolver for XPathWrapper<Rc<XPathNSResolver>> {
-    type Context = JSContext;
+    #[expect(unsafe_code)]
+    fn resolve_namespace_prefix(&self, prefix: &str) -> Option<String> {
+        let mut cx = unsafe { script_bindings::script_runtime::temp_cx() };
+        let cx = &mut cx;
 
-    fn resolve_namespace_prefix(&self, cx: &mut JSContext, prefix: &str) -> Option<String> {
         self.0
             .LookupNamespaceURI__(cx, Some(DOMString::from(prefix)), ExceptionHandling::Report)
             .ok()
@@ -309,20 +311,15 @@ impl<T> XPathWrapper<T> {
 }
 
 pub(crate) fn parse_expression(
-    cx: &mut JSContext,
     expression: &str,
     resolver: Option<Rc<XPathNSResolver>>,
     is_in_html_document: bool,
 ) -> Fallible<xpath::Expression> {
-    xpath::parse(
-        cx,
-        expression,
-        resolver.map(XPathWrapper),
-        is_in_html_document,
-    )
-    .map_err(|error| match error {
-        xpath::ParserError::FailedToResolveNamespacePrefix => Error::Namespace(None),
-        _ => Error::Syntax(Some(format!("Failed to parse XPath expression: {error:?}"))),
+    xpath::parse(expression, resolver.map(XPathWrapper), is_in_html_document).map_err(|error| {
+        match error {
+            xpath::ParserError::FailedToResolveNamespacePrefix => Error::Namespace(None),
+            _ => Error::Syntax(Some(format!("Failed to parse XPath expression: {error:?}"))),
+        }
     })
 }
 

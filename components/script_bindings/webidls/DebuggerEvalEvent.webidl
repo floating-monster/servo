@@ -38,7 +38,6 @@ dictionary DebuggerValue {
     double numberValue;
     DOMString stringValue;
     DOMString objectClass;
-    unsigned long ownPropertyLength;
 };
 
 dictionary ObjectPreview {

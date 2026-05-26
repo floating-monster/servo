@@ -116,7 +116,6 @@ partial interface mixin GlobalEventHandlers {
 // https://drafts.csswg.org/css-transitions/#interface-globaleventhandlers-idl
 partial interface mixin GlobalEventHandlers {
            attribute EventHandler ontransitionrun;
-           attribute EventHandler ontransitionstart;
            attribute EventHandler ontransitionend;
            attribute EventHandler ontransitioncancel;
 };

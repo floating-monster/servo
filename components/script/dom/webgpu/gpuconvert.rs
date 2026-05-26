@@ -5,9 +5,6 @@
 use std::borrow::Cow;
 use std::num::NonZeroU64;
 
-use script_bindings::codegen::GenericBindings::WebGPUBinding::{
-    GPUTextureMethods as _, GPUTextureViewDescriptor,
-};
 use wgpu_core::binding_model::{BindGroupEntry, BindingResource, BufferBinding};
 use wgpu_core::command as wgpu_com;
 use wgpu_core::pipeline::ProgrammableStageDescriptor;
@@ -19,10 +16,10 @@ use crate::dom::bindings::codegen::Bindings::WebGPUBinding::{
     GPUAddressMode, GPUBindGroupEntry, GPUBindGroupLayoutEntry, GPUBindingResource,
     GPUBlendComponent, GPUBlendFactor, GPUBlendOperation, GPUBufferBindingType, GPUColor,
     GPUCompareFunction, GPUCullMode, GPUExtent3D, GPUFilterMode, GPUFrontFace, GPUImageCopyBuffer,
-    GPUImageCopyTexture, GPUImageDataLayout, GPUIndexFormat, GPULoadOp, GPUMipmapFilterMode,
-    GPUObjectDescriptorBase, GPUOrigin3D, GPUPrimitiveState, GPUPrimitiveTopology,
-    GPUProgrammableStage, GPUSamplerBindingType, GPUStencilOperation, GPUStorageTextureAccess,
-    GPUStoreOp, GPUTextureAspect, GPUTextureDescriptor, GPUTextureDimension, GPUTextureFormat,
+    GPUImageCopyTexture, GPUImageDataLayout, GPUIndexFormat, GPULoadOp, GPUObjectDescriptorBase,
+    GPUOrigin3D, GPUPrimitiveState, GPUPrimitiveTopology, GPUProgrammableStage,
+    GPUSamplerBindingType, GPUStencilOperation, GPUStorageTextureAccess, GPUStoreOp,
+    GPUTextureAspect, GPUTextureDescriptor, GPUTextureDimension, GPUTextureFormat,
     GPUTextureSampleType, GPUTextureViewDimension, GPUVertexFormat,
 };
 use crate::dom::bindings::error::{Error, Fallible};
@@ -351,11 +348,12 @@ impl Convert<wgpu_types::FilterMode> for GPUFilterMode {
     }
 }
 
-impl Convert<wgpu_types::MipmapFilterMode> for GPUMipmapFilterMode {
+// TODO(sagudev): this will become GPUMipmapFilterMode once the webidl is updated
+impl Convert<wgpu_types::MipmapFilterMode> for GPUFilterMode {
     fn convert(self) -> wgpu_types::MipmapFilterMode {
         match self {
-            GPUMipmapFilterMode::Nearest => wgpu_types::MipmapFilterMode::Nearest,
-            GPUMipmapFilterMode::Linear => wgpu_types::MipmapFilterMode::Linear,
+            GPUFilterMode::Nearest => wgpu_types::MipmapFilterMode::Nearest,
+            GPUFilterMode::Linear => wgpu_types::MipmapFilterMode::Linear,
         }
     }
 }
@@ -676,12 +674,6 @@ impl<'a> Convert<BindGroupEntry<'a>> for &GPUBindGroupEntry {
             resource: match self.resource {
                 GPUBindingResource::GPUSampler(ref s) => BindingResource::Sampler(s.id().0),
                 GPUBindingResource::GPUTextureView(ref t) => BindingResource::TextureView(t.id().0),
-                GPUBindingResource::GPUTexture(ref t) => BindingResource::TextureView(
-                    t.CreateView(&GPUTextureViewDescriptor::default())
-                        .expect("Default descriptor should always be valid.")
-                        .id()
-                        .0,
-                ),
                 GPUBindingResource::GPUBufferBinding(ref b) => {
                     BindingResource::Buffer(BufferBinding {
                         buffer: b.buffer.id().0,
@@ -689,11 +681,6 @@ impl<'a> Convert<BindGroupEntry<'a>> for &GPUBindGroupEntry {
                         size: b.size,
                     })
                 },
-                GPUBindingResource::GPUBuffer(ref b) => BindingResource::Buffer(BufferBinding {
-                    buffer: b.id().0,
-                    offset: 0,
-                    size: None,
-                }),
             },
         }
     }

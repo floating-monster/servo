@@ -7,9 +7,7 @@ const debuggeesToPipelineIds = new Map;
 const debuggeesToWorkerIds = new Map;
 const sourceIdsToScripts = new Map;
 const frameActorsToFrames = new Map;
-const environmentActorsToEnvironments = new Map;
 const environmentsToEnvironmentActors = new Map;
-const blackboxing = new Map;
 let suspendedFrame = null;
 let lastPauseLocation = null;
 
@@ -106,14 +104,11 @@ function createValueGrip(value, depth = 0) {
             if (value.optimizedOut || value.uninitialized || value.missingArguments) {
                 return { valueType: "null" };
             }
-            // TODO: handle typed arrays and storage independently
-            const ownPropertyLength = value.getOwnPropertyNamesLength();
             // Debugger.Object - get preview using registered previewers
             // <https://firefox-source-docs.mozilla.org/devtools-user/debugger-api/debugger.object/index.html>
             return {
                 valueType: "object",
                 objectClass: value.class,
-                ownPropertyLength: Number.isFinite(ownPropertyLength) ? ownPropertyLength : undefined,
                 preview: getPreview(value, depth),
             };
         default:
@@ -174,6 +169,7 @@ const previewers = {};
 
 // <https://searchfox.org/mozilla-central/source/devtools/server/actors/object/previewers.js#125>
 previewers.Function = [ function FunctionPreviewer(obj, depth) {
+    const { ownProperties, ownPropertiesLength } = extractOwnProperties(obj, depth);
     let function_details = {
         name: obj.name,
         displayName: obj.displayName,
@@ -182,34 +178,36 @@ previewers.Function = [ function FunctionPreviewer(obj, depth) {
         isGenerator: obj.isGeneratorFunction,
     }
 
-    let preview = { kind: "Object", function: function_details };
     if (depth > 1) {
-        return undefined;
+        return { kind: "Object", function: function_details, ownPropertiesLength };
     }
 
-    const { ownProperties, ownPropertiesLength } = extractOwnProperties(obj, depth);
-    preview.ownProperties = ownProperties;
-    preview.ownPropertiesLength = ownPropertiesLength;
-
-    return preview;
+    return {
+        kind: "Object",
+        ownProperties,
+        ownPropertiesLength,
+        function: function_details
+    };
 } ];
 
 // <https://searchfox.org/mozilla-central/source/devtools/server/actors/object/previewers.js#172>
 previewers.Array = [ function ArrayPreviewer(obj, depth) {
     const lengthDescriptor = obj.getOwnPropertyDescriptor("length");
-    const arrayLength = lengthDescriptor ? lengthDescriptor.value : 0;
+    const length = lengthDescriptor ? lengthDescriptor.value : 0;
 
-    let preview = { kind: "ArrayLike", arrayLength };
     if (depth > 1) {
-        return undefined;
+        return {
+            kind: "ArrayLike",
+            arrayLength: length,
+        };
     }
 
-    let items = (preview.items = []);
-    for (let i = 0; i < arrayLength; i++) {
+    const items = [];
+    for (let i = 0; i < length; i++) {
         try {
             const desc = obj.getOwnPropertyDescriptor(i);
             if (desc && desc.value !== undefined) {
-                const grip = createValueGrip(desc.value, depth + 1);
+                const grip = createValueGrip(desc.value, depth);
                 delete grip.preview;
                 items.push(grip);
             }
@@ -218,22 +216,27 @@ previewers.Array = [ function ArrayPreviewer(obj, depth) {
         }
     }
 
-    return preview;
+    return {
+        kind: "ArrayLike",
+        arrayLength: length,
+        items: items,
+    };
 } ];
 
 // Generic fallback for object previewer
 // <https://searchfox.org/mozilla-central/source/devtools/server/actors/object/previewers.js#856>
 previewers.Object = [ function ObjectPreviewer(obj, depth) {
-    let preview = { kind: "Object" };
+    const { ownProperties, ownPropertiesLength } = extractOwnProperties(obj, depth);
+
     if (depth > 1) {
-       return undefined;
+       return { kind: "Object", ownPropertiesLength };
     }
 
-    const { ownProperties, ownPropertiesLength } = extractOwnProperties(obj, depth);
-    preview.ownProperties = ownProperties;
-    preview.ownPropertiesLength = ownPropertiesLength;
-
-    return preview;
+    return {
+        kind: "Object",
+        ownProperties,
+        ownPropertiesLength,
+    };
 } ];
 
 function getPreview(obj, depth) {
@@ -246,7 +249,7 @@ function getPreview(obj, depth) {
         if (result) return result;
     }
 
-    return undefined;
+    return { ownProperties: [], ownPropertiesLength: 0 };
 }
 
 // Evaluate some javascript code in the global context of the debuggee
@@ -353,11 +356,6 @@ function handlePauseAndRespond(frame, pauseReason) {
         line: offsetMetadata.lineNumber
     };
     lastPauseLocation = { line: offsetMetadata.lineNumber, column: offsetMetadata.columnNumber };
-
-    const source = frame.script.source;
-    if (source != null && isBlackBoxed(source.id, frameOffset.line, frameOffset.column)) {
-        return undefined;
-    }
 
     // Notify devtools and enter pause loop. This blocks until Resume.
     pauseAndRespond(
@@ -625,68 +623,3 @@ addEventListener("getEnvironment", event => {
     const actor = createEnvironmentActor(frame.environment);
     getEnvironmentResult(actor);
 });
-
-addEventListener("blackbox", event => {
-    if (event.coversFullSource) {
-        // Blackbox the entire source
-        blackboxing.set(event.spidermonkeyId, []);
-    } else {
-        // Blackbox only a part of the source
-        let blackbox = blackboxing.get(event.spidermonkeyId);
-        if (blackbox == undefined) {
-            blackbox = [];
-        }
-
-        blackbox.push({
-            start: event.start(),
-            end: event.end()
-        });
-
-        blackboxing.set(event.spidermonkeyId, blackbox);
-    }
-});
-
-addEventListener("unblackbox", event => {
-    if (event.coversFullSource) {
-        // Unblackbox the entire source
-        blackboxing.delete(event.spidermonkeyId);
-    } else {
-        // Unblackbox an earlier range of the source
-        const array = blackboxing.get(event.spidermonkeyId);
-
-        const start = event.start();
-        const end = event.end();
-        const index = array.findIndex(range => range.start.line === start.line
-                && range.start.column === start.column
-                && range.end.line === end.line
-                && range.end.column === end.column
-        );
-        if (index !== -1) {
-            array.splice(index, 1);
-
-            // Empty arrays represent a fully blackboxed file
-            // Therefore, if we just made the array empty we will need to remove it from the map
-            if (array.length === 0) {
-                blackboxing.delete(event.spidermonkeyId);
-            }
-        }
-    }
-});
-
-function isBlackBoxed(spidermonkeyId, line, column) {
-    const sourceBlackboxing = blackboxing.get(spidermonkeyId);
-
-    if (sourceBlackboxing == undefined) {
-        return false;
-    } else if (sourceBlackboxing.length === 0) {
-        // An empty array represents a fully ignored source
-        return true;
-    }
-
-    for (const range of sourceBlackboxing) {
-        return (range.start.line < line || (range.start.line === line && range.start.column <= column))
-                && (range.end.line > line || (range.end.line === line && range.end.column >= column))
-    }
-
-    return false;
-}

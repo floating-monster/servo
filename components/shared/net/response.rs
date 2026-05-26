@@ -245,11 +245,13 @@ impl Response {
 
     /// Convert to a filtered response, of type `filter_type`.
     /// Do not use with type Error or Default
+    #[rustfmt::skip]
     pub fn to_filtered(self, filter_type: ResponseType) -> Response {
-        assert!(!matches!(
-            filter_type,
-            ResponseType::Default | ResponseType::Error(..)
-        ));
+        match filter_type {
+            ResponseType::Default |
+            ResponseType::Error(..) => panic!(),
+            _ => (),
+        }
 
         let old_response = self.to_actual();
 
@@ -264,35 +266,27 @@ impl Response {
         response.response_type = filter_type;
 
         match response.response_type {
-            ResponseType::Default | ResponseType::Error(..) => unreachable!(),
+            ResponseType::Default |
+            ResponseType::Error(..) => unreachable!(),
 
             ResponseType::Basic => {
-                let headers = old_headers
-                    .iter()
-                    .filter(|(name, _)| {
-                        !matches!(
-                            &*name.as_str().to_ascii_lowercase(),
-                            "set-cookie" | "set-cookie2"
-                        )
-                    })
-                    .map(|(n, v)| (n.clone(), v.clone()))
-                    .collect();
+                let headers = old_headers.iter().filter(|(name, _)| {
+                    !matches!(&*name.as_str().to_ascii_lowercase(), "set-cookie" | "set-cookie2")
+                }).map(|(n, v)| (n.clone(), v.clone())).collect();
                 response.headers = headers;
             },
 
             ResponseType::Cors => {
-                let headers = old_headers
-                    .iter()
-                    .filter(|(name, _)| match &*name.as_str().to_ascii_lowercase() {
-                        "cache-control" | "content-language" | "content-length" |
-                        "content-type" | "expires" | "last-modified" | "pragma" => true,
+                let headers = old_headers.iter().filter(|(name, _)| {
+                    match &*name.as_str().to_ascii_lowercase() {
+                        "cache-control" | "content-language" | "content-length" | "content-type" |
+                        "expires" | "last-modified" | "pragma" => true,
                         "set-cookie" | "set-cookie2" => false,
-                        header => exposed_headers
-                            .iter()
-                            .any(|h| *header == h.as_str().to_ascii_lowercase()),
-                    })
-                    .map(|(n, v)| (n.clone(), v.clone()))
-                    .collect();
+                        header => {
+                            exposed_headers.iter().any(|h| *header == h.as_str().to_ascii_lowercase())
+                        }
+                    }
+                }).map(|(n, v)| (n.clone(), v.clone())).collect();
                 response.headers = headers;
             },
 

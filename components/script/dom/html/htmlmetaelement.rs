@@ -201,10 +201,8 @@ impl HTMLMetaElement {
         // Step 1. If the meta element has no content attribute, or if that attribute's value is the empty string, then return.
         if !content.is_empty() {
             // Step 3. Run the shared declarative refresh steps with the meta element's node document, input, and the meta element.
-            self.owner_document().shared_declarative_refresh_steps(
-                &content.as_bytes(),
-                /* from_meta_element */ true,
-            );
+            self.owner_document()
+                .shared_declarative_refresh_steps(&content.as_bytes());
         }
     }
 }

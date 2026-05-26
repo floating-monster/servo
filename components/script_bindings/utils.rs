@@ -28,10 +28,9 @@ use js::jsid::StringId;
 use js::jsval::{JSVal, UndefinedValue};
 use js::rust::wrappers::{
     CallOriginalPromiseReject, JS_DefineProperty, JS_DeletePropertyById, JS_ForwardGetPropertyTo,
-    JS_GetPendingException, JS_GetPrototype, JS_HasOwnProperty, JS_HasPropertyById,
-    JS_SetPendingException, JS_SetProperty,
+    JS_GetPendingException, JS_GetProperty, JS_GetPrototype, JS_HasOwnProperty, JS_HasProperty,
+    JS_HasPropertyById, JS_SetPendingException, JS_SetProperty,
 };
-use js::rust::wrappers2::{JS_GetProperty, JS_HasProperty};
 use js::rust::{
     HandleId, HandleObject, HandleValue, MutableHandleValue, Runtime, ToString, get_object_class,
 };
@@ -218,14 +217,14 @@ pub fn get_array_index_from_id(id: HandleId) -> Option<u32> {
 /// # Safety
 /// `cx` must point to a valid, non-null JSContext.
 #[allow(clippy::result_unit_err)]
-pub(crate) fn find_enum_value<'a, T>(
-    cx: &mut js::context::JSContext,
+pub(crate) unsafe fn find_enum_value<'a, T>(
+    cx: *mut JSContext,
     v: HandleValue,
     pairs: &'a [(&'static str, T)],
 ) -> Result<(Option<&'a T>, DOMString), ()> {
-    match ptr::NonNull::new(unsafe { ToString(cx.raw_cx(), v) }) {
+    match ptr::NonNull::new(ToString(cx, v)) {
         Some(jsstr) => {
-            let search = unsafe { jsstr_to_string(cx.raw_cx(), jsstr).into() };
+            let search = jsstr_to_string(cx, jsstr).into();
             Ok((
                 pairs
                     .iter()
@@ -241,19 +240,40 @@ pub(crate) fn find_enum_value<'a, T>(
 /// Get the property with name `property` from `object`.
 /// Returns `Err(())` on JSAPI failure (there is a pending exception), and
 /// `Ok(false)` if there was no property with the given name.
+///
+/// # Safety
+/// `cx` must point to a valid, non-null JSContext.
 #[allow(clippy::result_unit_err)]
-pub fn get_dictionary_property(
-    cx: &mut js::context::JSContext,
+pub unsafe fn get_dictionary_property(
+    cx: *mut JSContext,
     object: HandleObject,
     property: &CStr,
     rval: MutableHandleValue,
+    _can_gc: CanGc,
 ) -> Result<bool, ()> {
+    unsafe fn has_property(
+        cx: *mut JSContext,
+        object: HandleObject,
+        property: &CStr,
+        found: &mut bool,
+    ) -> bool {
+        JS_HasProperty(cx, object, property.as_ptr(), found)
+    }
+    unsafe fn get_property(
+        cx: *mut JSContext,
+        object: HandleObject,
+        property: &CStr,
+        value: MutableHandleValue,
+    ) -> bool {
+        JS_GetProperty(cx, object, property.as_ptr(), value)
+    }
+
     if object.get().is_null() {
         return Ok(false);
     }
 
     let mut found = false;
-    if unsafe { !JS_HasProperty(cx, object, property.as_ptr(), &mut found) } {
+    if !has_property(cx, object, property, &mut found) {
         return Err(());
     }
 
@@ -261,7 +281,7 @@ pub fn get_dictionary_property(
         return Ok(false);
     }
 
-    if unsafe { !JS_GetProperty(cx, object, property.as_ptr(), rval) } {
+    if !get_property(cx, object, property, rval) {
         return Err(());
     }
 

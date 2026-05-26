@@ -2305,14 +2305,6 @@ impl ScriptThread {
                     .fire_resume(cx, resume_limit_type, frame_actor_id);
                 self.debugger_paused.set(false);
             },
-            DevtoolScriptControlMsg::Blackbox(spidermonkey_id, coverage) => {
-                self.debugger_global
-                    .fire_blackbox(cx, spidermonkey_id, coverage);
-            },
-            DevtoolScriptControlMsg::Unblackbox(spidermonkey_id, coverage) => {
-                self.debugger_global
-                    .fire_unblackbox(cx, spidermonkey_id, coverage);
-            },
         }
     }
 
@@ -3590,10 +3582,7 @@ impl ScriptThread {
         let refresh_header = metadata.headers.as_deref().and_then(|h| h.get(REFRESH));
         if let Some(refresh_val) = refresh_header {
             // There are tests that this header handles Unicode code points
-            document.shared_declarative_refresh_steps(
-                refresh_val.as_bytes(),
-                /* from_meta_element */ false,
-            );
+            document.shared_declarative_refresh_steps(refresh_val.as_bytes());
         }
 
         document.set_ready_state(cx, DocumentReadyState::Loading);

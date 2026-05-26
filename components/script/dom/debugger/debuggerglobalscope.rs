@@ -5,8 +5,7 @@
 use std::cell::RefCell;
 
 use devtools_traits::{
-    BlackboxCoverage, DevtoolScriptControlMsg, EvaluateJSReply, ScriptToDevtoolsControlMsg,
-    SourceInfo, WorkerId,
+    DevtoolScriptControlMsg, EvaluateJSReply, ScriptToDevtoolsControlMsg, SourceInfo, WorkerId,
 };
 use dom_struct::dom_struct;
 use embedder_traits::ScriptToEmbedderChan;
@@ -27,7 +26,7 @@ use crate::dom::bindings::codegen::Bindings::DebuggerEvalEventBinding::GenericBi
 use crate::dom::bindings::codegen::Bindings::DebuggerGetEnvironmentEventBinding::{
     EnvironmentInfo, EnvironmentVariable,
 };
-use crate::dom::bindings::codegen::Bindings::DebuggerGlobalScopeBinding::{self};
+use crate::dom::bindings::codegen::Bindings::DebuggerGlobalScopeBinding;
 use crate::dom::bindings::codegen::Bindings::DebuggerInterruptEventBinding::{
     FrameInfo, FrameOffset, PauseReason,
 };
@@ -42,14 +41,12 @@ use crate::dom::bindings::inheritance::Castable;
 use crate::dom::bindings::root::DomRoot;
 use crate::dom::bindings::str::DOMString;
 use crate::dom::bindings::utils::define_all_exposed_interfaces;
-use crate::dom::debugger::debuggerblackboxevent::DebuggerBlackboxEvent;
 use crate::dom::debugger::debuggerclearbreakpointevent::DebuggerClearBreakpointEvent;
 use crate::dom::debugger::debuggerframeevent::DebuggerFrameEvent;
 use crate::dom::debugger::debuggergetenvironmentevent::DebuggerGetEnvironmentEvent;
 use crate::dom::debugger::debuggerinterruptevent::DebuggerInterruptEvent;
 use crate::dom::debugger::debuggerresumeevent::DebuggerResumeEvent;
 use crate::dom::debugger::debuggersetbreakpointevent::DebuggerSetBreakpointEvent;
-use crate::dom::debugger::debuggerunblackboxevent::DebuggerUnblackboxEvent;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::types::{
     DebuggerAddDebuggeeEvent, DebuggerEvalEvent, DebuggerGetPossibleBreakpointsEvent, Event,
@@ -360,42 +357,6 @@ impl DebuggerGlobalScope {
         assert!(
             event.fire(cx, self.upcast()),
             "Guaranteed by DebuggerClearBreakpointEvent::new"
-        );
-    }
-
-    pub(crate) fn fire_blackbox(
-        &self,
-        cx: &mut JSContext,
-        spidermonkey_id: u32,
-        coverage: BlackboxCoverage,
-    ) {
-        let event = DomRoot::upcast::<Event>(DebuggerBlackboxEvent::new(
-            self.upcast(),
-            spidermonkey_id,
-            coverage,
-            CanGc::from_cx(cx),
-        ));
-        assert!(
-            event.fire(cx, self.upcast()),
-            "Guaranteed by DebuggerBlackboxEvent::new"
-        );
-    }
-
-    pub(crate) fn fire_unblackbox(
-        &self,
-        cx: &mut JSContext,
-        spidermonkey_id: u32,
-        coverage: BlackboxCoverage,
-    ) {
-        let event = DomRoot::upcast::<Event>(DebuggerUnblackboxEvent::new(
-            self.upcast(),
-            spidermonkey_id,
-            coverage,
-            CanGc::from_cx(cx),
-        ));
-        assert!(
-            event.fire(cx, self.upcast()),
-            "Guaranteed by DebuggerUnblackboxEvent::new"
         );
     }
 }
@@ -735,7 +696,6 @@ fn parse_debugger_value(
             ObjectValue {
                 uuid: uuid::Uuid::new_v4().to_string(),
                 class,
-                own_property_length: value.ownPropertyLength,
                 preview: preview.map(parse_object_preview),
             }
         },

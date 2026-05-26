@@ -37,7 +37,6 @@ impl From<TokenizerError> for Error {
 
 /// Parse an XPath expression from a string.
 pub fn parse<N>(
-    cx: &mut N::Context,
     input: &str,
     namespace_resolver: Option<N>,
     is_in_html_document: bool,
@@ -46,7 +45,7 @@ where
     N: NamespaceResolver,
 {
     let mut parser = Parser::new(input, namespace_resolver, is_in_html_document)?;
-    let root_expression = parser.parse_expression(cx)?;
+    let root_expression = parser.parse_expression()?;
     if !parser.remaining().is_empty() {
         log::debug!(
             "Found trailing tokens after expression: {:?}",
@@ -106,18 +105,14 @@ where
         &self.tokens[self.position..]
     }
 
-    fn resolve_qualified_name(
-        &self,
-        cx: &mut N::Context,
-        prefix: &str,
-    ) -> Result<Namespace, Error> {
+    fn resolve_qualified_name(&self, prefix: &str) -> Result<Namespace, Error> {
         let Some(namespace_resolver) = self.namespace_resolver.as_ref() else {
             return Err(Error::FailedToResolveNamespacePrefix);
         };
 
         log::debug!("Resolving namespace prefix: {:?}", prefix);
         namespace_resolver
-            .resolve_namespace_prefix(cx, prefix)
+            .resolve_namespace_prefix(prefix)
             .map(Namespace::from)
             .ok_or(Error::FailedToResolveNamespacePrefix)
     }
@@ -131,7 +126,7 @@ where
         }
     }
 
-    pub(crate) fn parse_expression(&mut self, cx: &mut N::Context) -> Result<Expression, Error> {
+    pub(crate) fn parse_expression(&mut self) -> Result<Expression, Error> {
         let mut result;
 
         let mut expression_stack: Vec<(Expression, OperatorToken)> = vec![];
@@ -141,7 +136,7 @@ where
                 negations += 1;
             }
 
-            result = self.parse_union_expression(cx)?;
+            result = self.parse_union_expression()?;
 
             if negations > 1 {
                 if negations % 2 == 0 {
@@ -179,11 +174,11 @@ where
     }
 
     /// <https://www.w3.org/TR/1999/REC-xpath-19991116/#NT-UnionExpr>
-    fn parse_union_expression(&mut self, cx: &mut N::Context) -> Result<Expression, Error> {
-        let mut result = self.parse_path_expression(cx)?;
+    fn parse_union_expression(&mut self) -> Result<Expression, Error> {
+        let mut result = self.parse_path_expression()?;
 
         while self.advance_if_current_token_equals(Token::Union) {
-            let rhs = self.parse_path_expression(cx)?;
+            let rhs = self.parse_path_expression()?;
             result = Expression::Binary(Box::new(result), BinaryOperator::Union, Box::new(rhs));
         }
 
@@ -191,7 +186,7 @@ where
     }
 
     /// <https://www.w3.org/TR/1999/REC-xpath-19991116/#NT-PathExpr>
-    fn parse_path_expression(&mut self, cx: &mut N::Context) -> Result<Expression, Error> {
+    fn parse_path_expression(&mut self) -> Result<Expression, Error> {
         let current_token = self.expect_current_token()?;
 
         let is_absolute = matches!(current_token, Token::Parent | Token::Ancestor);
@@ -213,7 +208,7 @@ where
         }
 
         let first_expression = if !is_absolute {
-            let expression = self.parse_filter_or_step_expression(cx)?;
+            let expression = self.parse_filter_or_step_expression()?;
 
             // If there are no further steps in this path expression then return it as-is.
             if !self
@@ -225,7 +220,7 @@ where
 
             expression
         } else {
-            self.parse_step_expression(cx)?
+            self.parse_step_expression()?
         };
 
         let mut path_expression = PathExpression {
@@ -259,7 +254,7 @@ where
                 },
             };
 
-            let step_expression = self.parse_step_expression(cx)?;
+            let step_expression = self.parse_step_expression()?;
             path_expression.steps.push(step_expression);
         }
 
@@ -269,18 +264,15 @@ where
     /// <https://www.w3.org/TR/1999/REC-xpath-19991116/#NT-FilterExpr>
     ///
     /// <https://www.w3.org/TR/1999/REC-xpath-19991116/#NT-Step>
-    fn parse_filter_or_step_expression(
-        &mut self,
-        cx: &mut N::Context,
-    ) -> Result<Expression, Error> {
+    fn parse_filter_or_step_expression(&mut self) -> Result<Expression, Error> {
         let mut expression = match self.expect_current_token()? {
             Token::FunctionCall(name) => {
                 self.advance(1);
-                self.parse_function_call(cx, name)?
+                self.parse_function_call(name)?
             },
             Token::OpeningParenthesis => {
                 self.advance(1);
-                let expression = self.parse_expression(cx)?;
+                let expression = self.parse_expression()?;
                 if !self.advance_if_current_token_equals(Token::ClosingParenthesis) {
                     log::debug!("{:?}", self.expect_current_token()?);
                     return Err(Error::ExpectedClosingParenthesis);
@@ -296,11 +288,11 @@ where
                 // https://searchfox.org/firefox-main/rev/054e2b072785984455b3b59acad9444ba1eeffb4/dom/xslt/xpath/txExprParser.cpp#349
                 return Err(Error::CannotUseVariables);
             },
-            _ => self.parse_step_expression(cx)?,
+            _ => self.parse_step_expression()?,
         };
 
         // Parse a potential list of predicates
-        let predicate_list = self.parse_predicates(cx)?;
+        let predicate_list = self.parse_predicates()?;
         if !predicate_list.predicates.is_empty() {
             expression = Expression::Filter(FilterExpression {
                 expression: Box::new(expression),
@@ -312,7 +304,7 @@ where
     }
 
     /// <https://www.w3.org/TR/1999/REC-xpath-19991116/#section-Location-Steps>
-    fn parse_step_expression(&mut self, cx: &mut N::Context) -> Result<Expression, Error> {
+    fn parse_step_expression(&mut self) -> Result<Expression, Error> {
         let axis;
         let mut node_test = None;
 
@@ -369,7 +361,7 @@ where
             } else {
                 let namespace = name_token
                     .prefix
-                    .map(|prefix| self.resolve_qualified_name(cx, prefix))
+                    .map(|prefix| self.resolve_qualified_name(prefix))
                     .transpose()?;
 
                 let local_name = if self.is_in_html_document && name_token.prefix.is_none() {
@@ -390,7 +382,7 @@ where
             self.parse_node_test()?
         };
 
-        let predicate_list = self.parse_predicates(cx)?;
+        let predicate_list = self.parse_predicates()?;
         Ok(Expression::LocationStep(LocationStepExpression {
             axis,
             node_test,
@@ -437,10 +429,10 @@ where
     }
 
     /// <https://www.w3.org/TR/1999/REC-xpath-19991116/#predicates>
-    fn parse_predicates(&mut self, cx: &mut N::Context) -> Result<PredicateListExpression, Error> {
+    fn parse_predicates(&mut self) -> Result<PredicateListExpression, Error> {
         let mut predicates = vec![];
         while self.advance_if_current_token_equals(Token::OpeningBracket) {
-            let expression = self.parse_expression(cx)?;
+            let expression = self.parse_expression()?;
             predicates.push(expression);
             if !self.advance_if_current_token_equals(Token::ClosingBracket) {
                 return Err(Error::ExpectedClosingBracket);
@@ -449,11 +441,7 @@ where
         Ok(PredicateListExpression { predicates })
     }
 
-    fn parse_function_call(
-        &mut self,
-        cx: &mut N::Context,
-        function_name: &str,
-    ) -> Result<Expression, Error> {
+    fn parse_function_call(&mut self, function_name: &str) -> Result<Expression, Error> {
         struct ArgumentIterator<'a, 'b, N>
         where
             N: NamespaceResolver,
@@ -466,11 +454,11 @@ where
         where
             N: NamespaceResolver,
         {
-            fn maybe_next(&mut self, cx: &mut N::Context) -> Result<Option<Expression>, Error> {
+            fn maybe_next(&mut self) -> Result<Option<Expression>, Error> {
                 if self.done {
                     return Ok(None);
                 }
-                let expression = self.parser.parse_expression(cx)?;
+                let expression = self.parser.parse_expression()?;
                 if self
                     .parser
                     .advance_if_current_token_equals(Token::ClosingParenthesis)
@@ -484,8 +472,8 @@ where
                 Ok(Some(expression))
             }
 
-            fn next(&mut self, cx: &mut N::Context) -> Result<Expression, Error> {
-                self.maybe_next(cx)
+            fn next(&mut self) -> Result<Expression, Error> {
+                self.maybe_next()
                     .and_then(|maybe_argument| maybe_argument.ok_or(Error::TooFewFunctionArguments))
             }
         }
@@ -499,64 +487,63 @@ where
             // Node Set Functions
             "last" => CoreFunction::Last,
             "position" => CoreFunction::Position,
-            "count" => CoreFunction::Count(Box::new(arguments.next(cx)?)),
-            "id" => CoreFunction::Id(Box::new(arguments.next(cx)?)),
-            "local-name" => CoreFunction::LocalName(arguments.maybe_next(cx)?.map(Box::new)),
-            "namespace-uri" => CoreFunction::NamespaceUri(arguments.maybe_next(cx)?.map(Box::new)),
-            "name" => CoreFunction::Name(arguments.maybe_next(cx)?.map(Box::new)),
+            "count" => CoreFunction::Count(Box::new(arguments.next()?)),
+            "id" => CoreFunction::Id(Box::new(arguments.next()?)),
+            "local-name" => CoreFunction::LocalName(arguments.maybe_next()?.map(Box::new)),
+            "namespace-uri" => CoreFunction::NamespaceUri(arguments.maybe_next()?.map(Box::new)),
+            "name" => CoreFunction::Name(arguments.maybe_next()?.map(Box::new)),
 
             // String Functions
-            "string" => CoreFunction::String(arguments.maybe_next(cx)?.map(Box::new)),
+            "string" => CoreFunction::String(arguments.maybe_next()?.map(Box::new)),
             "concat" => {
                 let mut args = vec![];
-                while let Some(argument) = arguments.maybe_next(cx)? {
+                while let Some(argument) = arguments.maybe_next()? {
                     args.push(argument);
                 }
                 CoreFunction::Concat(args)
             },
-            "starts-with" => CoreFunction::StartsWith(
-                Box::new(arguments.next(cx)?),
-                Box::new(arguments.next(cx)?),
-            ),
+            "starts-with" => {
+                CoreFunction::StartsWith(Box::new(arguments.next()?), Box::new(arguments.next()?))
+            },
             "contains" => {
-                CoreFunction::Contains(Box::new(arguments.next(cx)?), Box::new(arguments.next(cx)?))
+                CoreFunction::Contains(Box::new(arguments.next()?), Box::new(arguments.next()?))
             },
             "substring-before" => CoreFunction::SubstringBefore(
-                Box::new(arguments.next(cx)?),
-                Box::new(arguments.next(cx)?),
+                Box::new(arguments.next()?),
+                Box::new(arguments.next()?),
             ),
             "substring-after" => CoreFunction::SubstringAfter(
-                Box::new(arguments.next(cx)?),
-                Box::new(arguments.next(cx)?),
+                Box::new(arguments.next()?),
+                Box::new(arguments.next()?),
             ),
             "substring" => CoreFunction::Substring(
-                Box::new(arguments.next(cx)?),
-                Box::new(arguments.next(cx)?),
-                arguments.maybe_next(cx)?.map(Box::new),
+                Box::new(arguments.next()?),
+                Box::new(arguments.next()?),
+                arguments.maybe_next()?.map(Box::new),
             ),
-            "string-length" => CoreFunction::StringLength(arguments.maybe_next(cx)?.map(Box::new)),
+            "string-length" => CoreFunction::StringLength(arguments.maybe_next()?.map(Box::new)),
             "normalize-space" => {
-                CoreFunction::NormalizeSpace(arguments.maybe_next(cx)?.map(Box::new))
+                CoreFunction::NormalizeSpace(arguments.maybe_next()?.map(Box::new))
             },
             "translate" => CoreFunction::Translate(
-                Box::new(arguments.next(cx)?),
-                Box::new(arguments.next(cx)?),
-                Box::new(arguments.next(cx)?),
+                Box::new(arguments.next()?),
+                Box::new(arguments.next()?),
+                Box::new(arguments.next()?),
             ),
 
             // Number Functions
-            "number" => CoreFunction::Number(arguments.maybe_next(cx)?.map(Box::new)),
-            "sum" => CoreFunction::Sum(Box::new(arguments.next(cx)?)),
-            "floor" => CoreFunction::Floor(Box::new(arguments.next(cx)?)),
-            "ceiling" => CoreFunction::Ceiling(Box::new(arguments.next(cx)?)),
-            "round" => CoreFunction::Round(Box::new(arguments.next(cx)?)),
+            "number" => CoreFunction::Number(arguments.maybe_next()?.map(Box::new)),
+            "sum" => CoreFunction::Sum(Box::new(arguments.next()?)),
+            "floor" => CoreFunction::Floor(Box::new(arguments.next()?)),
+            "ceiling" => CoreFunction::Ceiling(Box::new(arguments.next()?)),
+            "round" => CoreFunction::Round(Box::new(arguments.next()?)),
 
             // Boolean Functions
-            "boolean" => CoreFunction::Boolean(Box::new(arguments.next(cx)?)),
-            "not" => CoreFunction::Not(Box::new(arguments.next(cx)?)),
+            "boolean" => CoreFunction::Boolean(Box::new(arguments.next()?)),
+            "not" => CoreFunction::Not(Box::new(arguments.next()?)),
             "true" => CoreFunction::True,
             "false" => CoreFunction::False,
-            "lang" => CoreFunction::Lang(Box::new(arguments.next(cx)?)),
+            "lang" => CoreFunction::Lang(Box::new(arguments.next()?)),
 
             // Unknown function
             _ => return Err(Error::UnknownFunction),
@@ -617,9 +604,7 @@ mod tests {
     struct DummyNamespaceResolver;
 
     impl NamespaceResolver for DummyNamespaceResolver {
-        type Context = ();
-
-        fn resolve_namespace_prefix(&self, _: &mut (), _: &str) -> Option<String> {
+        fn resolve_namespace_prefix(&self, _: &str) -> Option<String> {
             Some("http://www.w3.org/1999/xhtml".to_owned())
         }
     }
@@ -648,7 +633,7 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            match parse(&mut (), input, Some(DummyNamespaceResolver), true) {
+            match parse(input, Some(DummyNamespaceResolver), true) {
                 Ok(result) => {
                     assert_eq!(result, expected, "{:?} was parsed incorrectly", input);
                 },
@@ -802,7 +787,7 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            match parse(&mut (), input, Some(DummyNamespaceResolver), true) {
+            match parse(input, Some(DummyNamespaceResolver), true) {
                 Ok(result) => {
                     assert_eq!(result, expected, "{:?} was parsed incorrectly", input);
                 },
@@ -834,7 +819,7 @@ mod tests {
                 }),
             ],
         });
-        match parse(&mut (), test_case, Some(DummyNamespaceResolver), true) {
+        match parse(test_case, Some(DummyNamespaceResolver), true) {
             Ok(result) => {
                 assert_eq!(result, expected, "{:?} was parsed incorrectly", test_case);
             },

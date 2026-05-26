@@ -88,7 +88,10 @@ impl ByteLengthQueuingStrategyMethods<crate::DomTypeHolder> for ByteLengthQueuin
 
 /// <https://streams.spec.whatwg.org/#byte-length-queuing-strategy-size-function>
 #[expect(unsafe_code)]
-fn byte_length_queuing_strategy_size(cx: &mut js::context::JSContext, args: CallArgs) -> bool {
+pub(crate) fn byte_length_queuing_strategy_size(
+    cx: &mut js::context::JSContext,
+    args: CallArgs,
+) -> bool {
     // Step 1. Let steps be the following steps, given chunk:
     // Step 1.1. Return ? GetV(chunk, "byteLength").
     let chunk = unsafe { HandleValue::from_raw(args.get(0)) };
@@ -115,9 +118,15 @@ fn byte_length_queuing_strategy_size(cx: &mut js::context::JSContext, args: Call
     rooted!(&in(cx) let object = chunk.to_object());
 
     // Return ? O.[[Get]](P, V).
-    match get_dictionary_property(cx, object.handle(), c"byteLength", unsafe {
-        MutableHandleValue::from_raw(args.rval())
-    }) {
+    match unsafe {
+        get_dictionary_property(
+            cx.raw_cx(),
+            object.handle(),
+            c"byteLength",
+            MutableHandleValue::from_raw(args.rval()),
+            CanGc::from_cx(cx),
+        )
+    } {
         Ok(true) => true,
         Ok(false) => {
             args.rval().set(UndefinedValue());

@@ -236,8 +236,6 @@ pub(crate) struct RefreshRedirectDue {
     pub(crate) url: ServoUrl,
     #[ignore_malloc_size_of = "non-owning"]
     pub(crate) window: DomRoot<Window>,
-    /// Whether the refresh originated from a `<meta>` element.
-    pub(crate) from_meta_element: bool,
 }
 impl RefreshRedirectDue {
     /// Step 13 of <https://html.spec.whatwg.org/multipage/#shared-declarative-refresh-steps>
@@ -248,13 +246,9 @@ impl RefreshRedirectDue {
         // automatic features browsing context flag set,
         // then navigate document's node navigable to urlRecord using document,
         // with historyHandling set to "replace".
-        if self.from_meta_element &&
-            self.window.Document().has_active_sandboxing_flag(
-                SandboxingFlagSet::SANDBOXED_AUTOMATIC_FEATURES_BROWSING_CONTEXT_FLAG,
-            )
-        {
-            return;
-        }
+        //
+        // TODO: check sandbox
+        // TODO: Check if meta was given
         let load_data = self
             .window
             .load_data_for_document(self.url.clone(), self.window.pipeline_id());
@@ -281,8 +275,6 @@ pub(crate) enum DeclarativeRefresh {
         #[no_trace]
         url: ServoUrl,
         time: u64,
-        /// Whether the refresh originated from a `<meta>` element.
-        from_meta_element: bool,
     },
     CreatedAfterLoad,
 }
@@ -2166,17 +2158,13 @@ impl Document {
         //
         // At least time seconds have elapsed since document's completely loaded time,
         // adjusted to take into account user or user agent preferences.
-        if let Some(DeclarativeRefresh::PendingLoad {
-            url,
-            time,
-            from_meta_element,
-        }) = &*self.declarative_refresh.borrow()
+        if let Some(DeclarativeRefresh::PendingLoad { url, time }) =
+            &*self.declarative_refresh.borrow()
         {
             self.window.as_global_scope().schedule_callback(
                 OneshotTimerCallback::RefreshRedirectDue(RefreshRedirectDue {
                     window: DomRoot::from_ref(self.window()),
                     url: url.clone(),
-                    from_meta_element: *from_meta_element,
                 }),
                 Duration::from_secs(*time),
             );
@@ -4462,7 +4450,7 @@ impl Document {
     }
 
     /// <https://html.spec.whatwg.org/multipage/#shared-declarative-refresh-steps>
-    pub(crate) fn shared_declarative_refresh_steps(&self, content: &[u8], from_meta_element: bool) {
+    pub(crate) fn shared_declarative_refresh_steps(&self, content: &[u8]) {
         // 1. If document's will declaratively refresh is true, then return.
         if self.will_declaratively_refresh() {
             return;
@@ -4527,19 +4515,15 @@ impl Document {
             } else {
                 // 11.12 If urlRecord is failure, then return.
                 return;
-            };
-            // 11.13 If urlRecord's scheme is "javascript", then return.
-            if url_record.scheme() == "javascript" {
-                return;
             }
         }
         // 12. Set document's will declaratively refresh to true.
         if self.completely_loaded() {
+            // TODO: handle active sandboxing flag
             self.window.as_global_scope().schedule_callback(
                 OneshotTimerCallback::RefreshRedirectDue(RefreshRedirectDue {
                     window: DomRoot::from_ref(self.window()),
                     url: url_record,
-                    from_meta_element,
                 }),
                 Duration::from_secs(time),
             );
@@ -4548,7 +4532,6 @@ impl Document {
             self.set_declarative_refresh(DeclarativeRefresh::PendingLoad {
                 url: url_record,
                 time,
-                from_meta_element,
             });
         }
     }
@@ -6385,7 +6368,7 @@ impl DocumentMethods<crate::DomTypeHolder> for Document {
         resolver: Option<Rc<XPathNSResolver>>,
     ) -> Fallible<DomRoot<crate::dom::types::XPathExpression>> {
         let parsed_expression =
-            parse_expression(cx, &expression.str(), resolver, self.is_html_document())?;
+            parse_expression(&expression.str(), resolver, self.is_html_document())?;
         Ok(XPathExpression::new(
             cx,
             &self.window,
@@ -6415,7 +6398,7 @@ impl DocumentMethods<crate::DomTypeHolder> for Document {
         result: Option<&crate::dom::types::XPathResult>,
     ) -> Fallible<DomRoot<crate::dom::types::XPathResult>> {
         let parsed_expression =
-            parse_expression(cx, &expression.str(), resolver, self.is_html_document())?;
+            parse_expression(&expression.str(), resolver, self.is_html_document())?;
         XPathExpression::new(cx, &self.window, None, parsed_expression).evaluate_internal(
             cx,
             context_node,
